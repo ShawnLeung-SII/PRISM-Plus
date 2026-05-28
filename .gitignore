@@ -1,0 +1,41 @@
+# Weights and checkpoints
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+checkpoints/
+outputs/
+logs/
+wandb/
+
+# Data
+data/
+datasets/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Experiment results
+results/
+*.json
+*.csv
+!configs/*.yaml
+
+# HDD/SSD paths (not repo content)
+/inspire/
