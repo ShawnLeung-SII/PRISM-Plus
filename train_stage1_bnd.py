@@ -142,6 +142,7 @@ def main():
         from torch.utils.data import Subset
         train_ds = Subset(train_ds, range(min(64, len(train_ds))))
         val_ds   = Subset(val_ds,   range(min(16, len(val_ds))))
+        cfg['batch_size'] = min(cfg.get('batch_size', 16), 4)  # limit for debug GPU
 
     train_sampler = DistributedSampler(train_ds) if env['dist'] else None
     train_loader  = DataLoader(train_ds, batch_size=cfg.get('batch_size', 16),

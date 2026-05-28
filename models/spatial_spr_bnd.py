@@ -41,37 +41,44 @@ from latpixdepth.models.vfm_interface_v2 import VFMInterface
 
 class VFMScaleCrossAttn(nn.Module):
     """
-    Cross-attention at one BND scale.
+    Cross-attention at one BND scale using F.scaled_dot_product_attention
+    (FlashAttention-backed, O(N) memory vs O(N²) for nn.MultiheadAttention).
 
     Q: encoder skip features D_l   [B, C_l, h_l, w_l]
-    K, V: VFM tokens (bilinear-aligned to scale l) [B, h_l*w_l, D_vfm]
-
-    Output: spatial residual [B, C_l, h_l, w_l] added to D_l.
-    Only adds ~375K params per scale (d_model=256, 8 heads).
+    K, V: VFM tokens aligned to scale l  [B, N_vfm, D_vfm]
     """
 
     def __init__(self, enc_dim: int, vfm_dim: int = 1024,
                  d_model: int = 256, n_heads: int = 8):
         super().__init__()
+        assert d_model % n_heads == 0
+        self.n_heads = n_heads
+        self.d_head  = d_model // n_heads
+        self.d_model = d_model
         self.q_proj  = nn.Linear(enc_dim, d_model)
-        self.kv_proj = nn.Linear(vfm_dim, d_model * 2)
-        self.attn    = nn.MultiheadAttention(d_model, n_heads, batch_first=True)
+        self.k_proj  = nn.Linear(vfm_dim, d_model)
+        self.v_proj  = nn.Linear(vfm_dim, d_model)
         self.out     = nn.Linear(d_model, enc_dim)
         self.norm    = nn.LayerNorm(enc_dim)
 
     def forward(self, feat: torch.Tensor, vfm_tok: torch.Tensor) -> torch.Tensor:
-        """
-        feat:    [B, C, h, w]
-        vfm_tok: [B, N_vfm, D_vfm]  (already interpolated to (h, w))
-        """
+        """feat: [B,C,h,w]  vfm_tok: [B,N,D_vfm]"""
         B, C, h, w = feat.shape
         q_flat = feat.flatten(2).transpose(1, 2)          # [B, hw, C]
-        q  = self.q_proj(q_flat)                          # [B, hw, d]
-        kv = self.kv_proj(vfm_tok)                        # [B, hw, 2d]
-        k, v = kv.chunk(2, dim=-1)
-        attn_out, _ = self.attn(q, k, v)                  # [B, hw, d]
-        res = self.out(attn_out)                           # [B, hw, C]
-        res = self.norm(q_flat + res)                      # residual + norm  [B,hw,C]
+        q = self.q_proj(q_flat)                           # [B, hw, d]
+        k = self.k_proj(vfm_tok)                          # [B, N, d]
+        v = self.v_proj(vfm_tok)                          # [B, N, d]
+
+        # Reshape for multi-head: [B, heads, seq, d_head]
+        def _mh(t): return t.reshape(B, -1, self.n_heads, self.d_head).transpose(1, 2)
+        q_h, k_h, v_h = _mh(q), _mh(k), _mh(v)
+
+        # FlashAttention path (memory-efficient, O(N) memory)
+        attn = F.scaled_dot_product_attention(q_h, k_h, v_h)  # [B, heads, hw, d_head]
+        attn = attn.transpose(1, 2).reshape(B, h*w, self.d_model)
+
+        res = self.out(attn)                               # [B, hw, C]
+        res = self.norm(q_flat + res)
         return feat + res.transpose(1, 2).reshape(B, C, h, w)
 
 
@@ -91,7 +98,9 @@ class SpatialSPRBND(DualStreamPixelBranchV9):
     # VFM intermediate layers for multi-scale extraction (DINOv2-Large: 24 blocks)
     VFM_LAYERS = [4, 11, 17, 23]
     # Matches encoder dims: F1=64, F2=128, F3=256, F4=512  (V9 defaults)
-    ENC_DIMS   = [64, 128, 256, 512]
+    # Cross-attn applied to F2,F3,F4 only (skip F1 H/2=256 → too large for INT_MAX)
+    # F1 still gets GlobalSemanticContext channel-attention from parent V9
+    CROSS_ATTN_DIMS = [128, 256, 512]   # F2, F3, F4
 
     def __init__(
         self,
@@ -130,14 +139,14 @@ class SpatialSPRBND(DualStreamPixelBranchV9):
         print(f"  VFM backbone patch_size: {self._backbone_ps}")
         vfm_dim = getattr(self._vfm, 'embed_dim', 1024)
 
-        # One cross-attention module per encoder scale (F1..F4)
+        # Cross-attention for F2,F3,F4 only (F1 skipped: 256×256 × D=1024 overflows INT_MAX)
         self.vfm_cross_attns = nn.ModuleList([
             VFMScaleCrossAttn(c, vfm_dim=vfm_dim, d_model=vfm_cross_attn_dim)
-            for c in self.ENC_DIMS
+            for c in self.CROSS_ATTN_DIMS
         ])
 
         n_new = sum(p.numel() for p in self.vfm_cross_attns.parameters())
-        print(f"SpatialSPRBND: added {n_new/1e6:.2f}M cross-attn params")
+        print(f"SpatialSPRBND: added {n_new/1e6:.2f}M cross-attn params (F2,F3,F4 only)")
 
     # ------------------------------------------------------------------ #
     def _extract_vfm_last(self, rgb: torch.Tensor) -> Tuple[torch.Tensor, int, int]:
@@ -188,12 +197,13 @@ class SpatialSPRBND(DualStreamPixelBranchV9):
         else:
             channel_weights = None
 
-        # 3. C1: VFM spatial cross-attention on F1..F4
+        # 3. C1: VFM spatial cross-attention on F2,F3,F4 only
+        #    F1 (H/2=256) skipped: [B, 1024, 256, 256] overflows INT_MAX at batch≥32
         vfm_tok, h_vfm, w_vfm = self._extract_vfm_last(rgb)
         for i, ca in enumerate(self.vfm_cross_attns):
-            fi = enc_feats[i + 1]                 # F1..F4  (i=0→F1, …, i=3→F4)
+            fi = enc_feats[i + 2]                 # F2..F4  (i=0→F2, i=1→F3, i=2→F4)
             tok_l = self._vfm_at(vfm_tok, h_vfm, w_vfm, fi.shape[-2], fi.shape[-1])
-            enc_feats[i + 1] = ca(fi, tok_l)      # residual-enhanced skip
+            enc_feats[i + 2] = ca(fi, tok_l)
 
         # 4. UNet decoder (unchanged, receives enhanced skips)
         out, pyramid = self.decoder(enc_feats, channel_weights)
