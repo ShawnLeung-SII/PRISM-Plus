@@ -127,7 +127,7 @@ def main():
         model.load_state_dict(ckpt.get('model', ckpt), strict=False)
 
     if env['dist']:
-        model = DDP(model, device_ids=[env['local']], find_unused_parameters=True)
+        model = DDP(model, device_ids=[env['local']], find_unused_parameters=False)
 
     # ---- Data ----
     data_root = cfg['data_root']
@@ -145,11 +145,13 @@ def main():
         cfg['batch_size'] = min(cfg.get('batch_size', 16), 4)  # limit for debug GPU
 
     train_sampler = DistributedSampler(train_ds) if env['dist'] else None
+    val_sampler   = DistributedSampler(val_ds, shuffle=False) if env['dist'] else None
     train_loader  = DataLoader(train_ds, batch_size=cfg.get('batch_size', 16),
         shuffle=(train_sampler is None), sampler=train_sampler,
         num_workers=cfg.get('num_workers', 4), pin_memory=True, drop_last=True)
     val_loader    = DataLoader(val_ds, batch_size=cfg.get('batch_size', 16),
-        shuffle=False, num_workers=4, pin_memory=True)
+        shuffle=False, sampler=val_sampler,
+        num_workers=4, pin_memory=True, drop_last=False)
 
     # ---- Optimiser ----
     epochs = 5 if args.debug else cfg.get('epochs', 100)
@@ -196,7 +198,8 @@ def main():
                     rgb  = batch['rgb'].to(env['device'])
                     sim_d= batch['sim_depth'].to(env['device'])
                     gt_m = batch['hole_mask'].to(env['device'])
-                    out  = model(rgb, sim_d)
+                    with autocast('cuda'):
+                        out = model(rgb, sim_d)
                     iou_l.append(inv_iou(out['pred_failure'], gt_m).item())
                     biou_l.append(boundary_iou(out['pred_failure'], gt_m).item())
 
