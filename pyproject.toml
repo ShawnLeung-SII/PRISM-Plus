@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "prism-plus"
+version = "0.1.0"
+description = "PRISM+: Physics-Prior Closure for Consistent and Generalizable Depth Noise Modeling (TPAMI extension of PRISM, ICML 2026)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Xiujian Liang", email = "liangxj23@m.fudan.edu.cn" },
+]
+keywords = ["depth-estimation", "sim2real", "noise-modeling", "diffusion", "robotics", "VFM"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.1",
+    "torchvision",
+    "numpy",
+    "Pillow",
+    "opencv-python",
+    "pyyaml",
+    "tqdm",
+    "omegaconf",
+    "huggingface_hub",
+    "einops",
+    "transformers",
+]
+
+[project.optional-dependencies]
+diffusion = [
+    "diffusers",
+    "accelerate",
+    "xformers",
+]
+wandb = ["wandb"]
+dev = [
+    "pytest",
+    "ruff",
+    "black",
+]
+
+[project.urls]
+Repository = "https://github.com/ShawnLeung-SII/PRISM-Plus"
+Issues = "https://github.com/ShawnLeung-SII/PRISM-Plus/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["prism_plus*"]
+exclude = ["tests*", "tools*", "scripts*", "configs*", "docs*"]

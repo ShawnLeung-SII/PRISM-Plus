@@ -1,5 +1,17 @@
-"""
-New evaluation metrics for PRISM+ TPAMI extension.
+"""Evaluation metrics for PRISM and PRISM+.
+
+Includes both PRISM (ICML) original metrics and PRISM+ (TPAMI) new metrics.
+
+PRISM original:
+    * inv_iou             – invalidation IoU (hole mask overlap)
+    * standard depth      – MAE / RMSE / AbsRel / delta<1.25 (in compute_depth_metrics_full)
+
+PRISM+ new (for TPAMI):
+    * boundary_mae        – MAE within radius px of GT hole boundary (isolates C2)
+    * flying_pixel_rate   – valid pixels adjacent to holes with err > k * global_mae
+    * boundary_iou        – IoU computed only on boundary region (for C1 thin-geom eval)
+    * tnfr                – Temporal Noise Flicker Rate (video sequences, C4)
+
 
 Implements:
   - boundary_mae()      : MAE within 5px of GT hole boundary

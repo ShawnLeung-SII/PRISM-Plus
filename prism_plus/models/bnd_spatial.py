@@ -1,38 +1,33 @@
+"""PRISM+ Spatial-SPR BND (C1).
+
+Extends the baseline :class:`BND` by injecting multi-scale VFM cross-attention
+into the encoder skip features (F2, F3, F4) before they enter the UNet decoder.
+
+This is the C1 contribution of the PRISM+ TPAMI extension: replacing the
+GAP-based global channel attention of the baseline with pixel-level
+material-noise alignment via per-scale cross-attention.
+
+Implementation choices:
+* Cross-attention uses ``F.scaled_dot_product_attention`` (FlashAttention
+  backend, O(N) memory).
+* Applied to F2 (H/4), F3 (H/8), F4 (H/16). F1 is skipped because the
+  attention matrix at H/2=256 (with batch \u2265 32) would exceed INT_MAX.
+* The frozen VFM backbone is shared with the parent BND to avoid a second
+  ~300M parameter copy.
+
+References
+----------
+* FINAL_PROPOSAL.md \u00a7C1 Spatial-SPR
+* EXPERIMENT_PLAN.md \u00a7B2 (param-matched ablation)
 """
-Spatial-SPR BND (C1 for PRISM+)
-
-Extends DualStreamPixelBranchV9 by adding VFM spatial cross-attention
-to the encoder skip features at each scale, replacing the GAP-based
-global channel attention with pixel-level material-noise alignment.
-
-C1 design (from FINAL_PROPOSAL):
-  At each BND scale l:
-    Q = D_l  (skip/decoder features at scale l)
-    K, V = bilinear_interp(Φ_VFM, scale_l)   ← pixel-level alignment
-    enhanced_l = D_l + softmax(Q·K^T/√d)·V   ← residual add
-
-Implementation strategy:
-  Subclass DualStreamPixelBranchV9, inject VFM cross-attention into the
-  encoder skip features (F1..F4) BEFORE they enter the existing decoder.
-  This avoids modifying DecoderBlock and keeps the baseline decoder intact.
-
-New trainable params: ~1.5M (4× VFMCrossAttn modules)
-Frozen params: VFM backbone (unchanged)
-"""
-
-import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, List, Optional, Tuple
 
-# ---- path setup ----
-_LAT = '/inspire/ssd/project/robot-dna/liangxiujian-253308390319/latpixdepth'
-if _LAT not in sys.path:
-    sys.path.insert(0, _LAT)
 
-from latpixdepth.models.dual_stream_pixel_branch_v9 import DualStreamPixelBranchV9
-from latpixdepth.models.vfm_interface_v2 import VFMInterface
+from .bnd import BND
+from .vfm import VFMInterface
 
 
 # ---------------------------------------------------------------------------
@@ -83,14 +78,14 @@ class VFMScaleCrossAttn(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# Main model: SpatialSPRBND
+# Main model: SpatialBND
 # ---------------------------------------------------------------------------
 
-class SpatialSPRBND(DualStreamPixelBranchV9):
+class SpatialBND(BND):
     """
     PRISM+ BND with Spatial-SPR (C1).
 
-    Inherits DualStreamPixelBranchV9 in full; adds VFM cross-attention
+    Inherits BND in full; adds VFM cross-attention
     modules that inject spatial physics priors into encoder skip features
     F1..F4 before the UNet decoder.
     """
@@ -126,7 +121,7 @@ class SpatialSPRBND(DualStreamPixelBranchV9):
         if self.semantic_context is not None:
             self._vfm: VFMInterface = self.semantic_context.vfm
         else:
-            from latpixdepth.models.vfm_interface_v2 import create_vfm
+            from .vfm import create_vfm
             self._vfm = create_vfm(vfm_type, checkpoint_path=vfm_checkpoint, freeze=True)
 
         # Detect actual backbone patch size (MoGe2 uses DINOv2 patch=14 internally,
@@ -146,7 +141,7 @@ class SpatialSPRBND(DualStreamPixelBranchV9):
         ])
 
         n_new = sum(p.numel() for p in self.vfm_cross_attns.parameters())
-        print(f"SpatialSPRBND: added {n_new/1e6:.2f}M cross-attn params (F2,F3,F4 only)")
+        print(f"SpatialBND: added {n_new/1e6:.2f}M cross-attn params (F2,F3,F4 only)")
 
     # ------------------------------------------------------------------ #
     def _extract_vfm_last(self, rgb: torch.Tensor) -> Tuple[torch.Tensor, int, int]:
@@ -179,7 +174,7 @@ class SpatialSPRBND(DualStreamPixelBranchV9):
     # ------------------------------------------------------------------ #
     def forward(self, rgb: torch.Tensor, depth: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
-        Same interface as DualStreamPixelBranchV9.forward.
+        Same interface as BND.forward.
 
         C1 injection: after encoder, before decoder,
         each skip feature F_l is enhanced with VFM cross-attention.
@@ -243,14 +238,14 @@ class SpatialSPRBND(DualStreamPixelBranchV9):
 # Factory
 # ---------------------------------------------------------------------------
 
-def create_spatial_spr_bnd(
+def create_spatial_bnd(
     vfm_type: str = 'moge2',
     vfm_checkpoint: Optional[str] = None,
     encoder_size: str = 'large',
     deep_supervision: bool = True,
     **kwargs,
-) -> SpatialSPRBND:
-    return SpatialSPRBND(
+) -> SpatialBND:
+    return SpatialBND(
         vfm_type=vfm_type,
         vfm_checkpoint=vfm_checkpoint,
         encoder_size=encoder_size,
