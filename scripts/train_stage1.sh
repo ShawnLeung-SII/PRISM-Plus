@@ -21,6 +21,7 @@ export TORCH_HOME="$CACHE_ROOT/torch"
 export TORCH_EXTENSIONS_DIR="$CACHE_ROOT/torch_extensions"
 export PIP_CACHE_DIR="$CACHE_ROOT/pip"
 export WANDB_CACHE_DIR="$CACHE_ROOT/wandb"
+export WANDB_MODE=disabled
 export HDD_PYPATH="$CACHE_ROOT/python-packages"
 export PYTHONPATH="$HDD_PYPATH${PYTHONPATH:+:$PYTHONPATH}"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
