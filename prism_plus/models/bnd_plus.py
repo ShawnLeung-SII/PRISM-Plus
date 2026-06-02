@@ -187,6 +187,13 @@ class PRISMPlusBND(BND):
             band_radius=boundary_band_radius,
         )
 
+        # PRISMPlusBND does NOT use the parent's detail_head / detail_scale
+        # (we replace the detail path with BoundaryBranch + BoundaryRefiner).
+        # Remove them so DDP does not see "unused parameters".
+        for attr in ("detail_head", "detail_scale"):
+            if hasattr(self, attr):
+                delattr(self, attr)
+
         n_new = sum(p.numel() for p in [
             *self.gate_f3.parameters(), *self.gate_f4.parameters(),
             *self.boundary_branch.parameters(), *self.boundary_refiner.parameters(),

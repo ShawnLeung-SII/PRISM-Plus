@@ -111,7 +111,7 @@ def main():
             print(f"Resumed from {args.resume}")
 
     if env["dist"]:
-        model = DDP(model, device_ids=[env["local"]], find_unused_parameters=False)
+        model = DDP(model, device_ids=[env["local"]], find_unused_parameters=True)
 
     # -------- Data --------
     data_root = cfg["data_root"]
