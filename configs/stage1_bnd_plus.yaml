@@ -1,0 +1,38 @@
+# PRISM+ Stage 1 — PRISMPlusBND v0.2.0 (Coarse Semantic Prior + Boundary Refinement)
+# Hardware target: 4× NVIDIA H200 SXM 141GB
+
+# --- data ---
+data_root: /inspire/hdd/project/robot-dna/liangxiujian-253308390319/ByteCameraDepth
+resolution: 512
+num_workers: 8
+
+# --- VFM backbone ---
+vfm_type: moge2
+vfm_checkpoint: /inspire/hdd/global_user/liangxiujian-253308390319/0-XIUJIANLIANG/weights/moge2.pt
+encoder_size: large
+
+# --- PRISMPlusBND specific ---
+vfm_cross_attn_dim: 128       # smaller than v0.1.0 (256); coarse stages don't need much
+boundary_band_radius: 3       # ±3 px around predicted edge — refiner acts here
+
+# --- training ---
+batch_size: 32                # per-GPU; effective = 32 * world_size
+epochs: 100
+lr: 1.0e-4
+
+# --- loss weights (BNDPlusLoss) ---
+w_region: 1.0                 # main BCE+Dice on final mask
+w_coarse: 0.3                 # supervision on coarse logits (before refinement)
+w_edge:   0.5                 # supervision on edge branch  (1-px boundary BCE+Dice)
+w_band:   1.0                 # band-weighted BCE on final (precision near boundary)
+w_sdf:    0.05                # SDF loss (distance-based, small weight)
+pos_weight: 3.0               # for region BCE
+edge_pos_weight: 5.0          # boundary pixels are rarer -> stronger weighting
+dice_weight: 0.3
+edge_radius: 1
+
+# --- visualisation ---
+vis_n_samples: 10             # save 10 samples per epoch to outputs/vis/ep_XXX/
+
+# --- output ---
+output_dir: /inspire/hdd/global_user/liangxiujian-253308390319/0-XIUJIANLIANG/checkpoints/prism_plus/stage1_v2
