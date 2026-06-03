@@ -16,7 +16,15 @@ vfm_cross_attn_dim: 128       # smaller than v0.1.0 (256); coarse stages don't n
 boundary_band_radius: 3       # ±3 px around predicted edge — refiner acts here
 
 # --- training ---
-batch_size: 12                # per-GPU on H100 80GB (OOM-safe); effective = 12 × 8 = 96
+# === Auto batch_size by GPU type ===
+# train_bnd_plus.py will look up the per-GPU batch_size by matching
+# the GPU name substring (torch.cuda.get_device_name(0)).
+# Fallback: the literal `batch_size` field below.
+batch_size_by_gpu:
+  H200:     32     # 141GB VRAM (best fit; effective batch with 4 GPUs = 128)
+  H100:     12     # 80GB VRAM  (OOM-safe; effective batch with 4 GPUs = 48)
+  "4090":   4      # 47GB VRAM  (debug only)
+batch_size: 12     # fallback if GPU name not matched
 epochs: 100
 lr: 1.0e-4
 

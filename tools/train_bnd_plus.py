@@ -74,6 +74,22 @@ def main():
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
+    # ---- Auto batch_size by GPU type ----
+    # Memory budget differs greatly: H200 141GB >> H100 80GB >> 4090 47GB.
+    # Pick the per-GPU batch from cfg["batch_size_by_gpu"] if available.
+    by_gpu = cfg.get("batch_size_by_gpu") or {}
+    if torch.cuda.is_available() and by_gpu:
+        gpu_name = torch.cuda.get_device_name(0)
+        for key, value in by_gpu.items():
+            if key in gpu_name:
+                if env["main"]:
+                    print(f"  [auto] GPU detected: {gpu_name!r} -> batch_size = {value}")
+                cfg["batch_size"] = value
+                break
+        else:
+            if env["main"]:
+                print(f"  [auto] GPU {gpu_name!r} not in batch_size_by_gpu, using cfg batch_size = {cfg.get('batch_size')}")
+
     out_dir = Path(cfg["output_dir"])
     vis_dir = out_dir / "vis"
     if env["main"]:
