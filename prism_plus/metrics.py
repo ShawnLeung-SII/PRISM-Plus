@@ -4,54 +4,229 @@ Includes both PRISM (ICML) original metrics and PRISM+ (TPAMI) new metrics.
 
 PRISM original:
     * inv_iou             – invalidation IoU (hole mask overlap)
-    * standard depth      – MAE / RMSE / AbsRel / delta<1.25 (in compute_depth_metrics_full)
+    * standard depth      – MAE / RMSE / AbsRel / delta<1.25
 
 PRISM+ new (for TPAMI):
-    * boundary_mae        – MAE within radius px of GT hole boundary (isolates C2)
-    * flying_pixel_rate   – valid pixels adjacent to holes with err > k * global_mae
-    * boundary_iou        – IoU computed only on boundary region (for C1 thin-geom eval)
+    * boundary_mae        – MAE within r px of GT hole boundary  (C2)
+    * flying_pixel_rate   – valid pixels adjacent to holes with err > k × global_mae
+    * boundary_iou        – Boundary IoU (Cheng+ CVPR'21 definition, fixed) (C1)
     * tnfr                – Temporal Noise Flicker Rate (video sequences, C4)
 
-
-Implements:
-  - boundary_mae()      : MAE within 5px of GT hole boundary
-  - flying_pixel_rate() : fraction of valid pixels adj to holes with large depth error
-  - tnfr()              : Temporal Noise Flicker Rate (video sequences)
-  - inv_iou()           : Invalidation IoU (hole mask overlap)
-  - boundary_iou()      : IoU computed on boundary region only
+PRISM+ NEW (for diagnosing precision/recall imbalance, added 2026-06-08):
+    * precision_recall_f1 – per-pixel precision, recall, F1
+    * coverage_on_det     – recall on STRUCTURED failure (open(GT,k))
+    * coverage_on_noise   – recall on RANDOM dots (GT - open(GT,k))
+    * fp_density          – false positive density (FP / (H*W - GT_pos))
+    * prob_polarisation   – fraction of predicted prob in [0.2, 0.8] (lower=more polarised)
 """
+
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
-import numpy as np
-from typing import Optional
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Internal helpers — accept binary {0,1} or float, treat >0.5 as positive.
+# All ops are GPU-friendly and vectorised.
 # ---------------------------------------------------------------------------
 
-def _dilate_mask(mask: torch.Tensor, radius: int = 5) -> torch.Tensor:
-    """Binary dilation of a [B,1,H,W] mask by `radius` pixels."""
+def _as_binary(t: torch.Tensor, thresh: float = 0.5) -> torch.Tensor:
+    """Convert prob or already-binary tensor into hard {0,1} float."""
+    return (t > thresh).float()
+
+
+def _dilate_bin(mask01: torch.Tensor, radius: int = 5) -> torch.Tensor:
+    """Binary dilation via max-pool (kernel = 2r+1). Input must be 0/1."""
     k = 2 * radius + 1
-    kernel = torch.ones(1, 1, k, k, device=mask.device, dtype=mask.dtype)
-    dilated = F.conv2d(mask.float(), kernel, padding=radius)
-    return (dilated > 0).float()
+    return F.max_pool2d(mask01, k, stride=1, padding=radius)
 
 
-def _boundary_region(gt_mask: torch.Tensor, radius: int = 5) -> torch.Tensor:
-    """
-    Returns a binary mask of the region within `radius` pixels of the
-    GT hole boundary (transition between hole and valid).
-    """
-    dilated_hole  = _dilate_mask(gt_mask, radius)
-    dilated_valid = _dilate_mask(1.0 - gt_mask, radius)
-    boundary = dilated_hole * dilated_valid   # intersection = boundary region
-    return boundary
+def _erode_bin(mask01: torch.Tensor, radius: int = 5) -> torch.Tensor:
+    """Binary erosion via min-pool. Input must be 0/1."""
+    k = 2 * radius + 1
+    return -F.max_pool2d(-mask01, k, stride=1, padding=radius)
+
+
+def _morph_open(mask01: torch.Tensor, radius: int = 1) -> torch.Tensor:
+    """Open = erode then dilate; removes isolated dots smaller than (2r+1)²."""
+    return _dilate_bin(_erode_bin(mask01, radius), radius)
+
+
+def _boundary_of(mask01: torch.Tensor, radius: int = 2) -> torch.Tensor:
+    """1-px-wide boundary band of a binary mask (dilate ⊕ erode)."""
+    dil = _dilate_bin(mask01, radius)
+    ero = _erode_bin(mask01, radius)
+    return (dil - ero).clamp(0.0, 1.0)
 
 
 # ---------------------------------------------------------------------------
-# Boundary-MAE
+# Core IoU family
+# ---------------------------------------------------------------------------
+
+def inv_iou(
+    pred_mask: torch.Tensor,
+    gt_mask: torch.Tensor,
+    threshold: float = 0.5,
+    eps: float = 1e-6,
+) -> torch.Tensor:
+    """Invalidation IoU.
+
+    Both tensors are [B,1,H,W]; ``pred_mask`` may be sigmoid prob OR binary
+    (any value > ``threshold`` counts as positive). ``gt_mask`` is treated
+    as binary the same way (robust to soft labels / smoothed GT).
+
+    Returns scalar = mean per-sample IoU. Samples whose union is empty are
+    excluded from the mean (instead of contributing 0, which used to bias
+    the metric downward).
+    """
+    pred_b = _as_binary(pred_mask, threshold)
+    gt_b   = _as_binary(gt_mask, 0.5)
+    inter  = (pred_b * gt_b).sum(dim=[1, 2, 3])
+    union  = ((pred_b + gt_b) > 0).float().sum(dim=[1, 2, 3])
+
+    # Mask out samples with no GT positives AND no predictions
+    valid_sample = union > 0
+    if valid_sample.sum() == 0:
+        return pred_mask.new_zeros(())
+    per_sample = inter / (union + eps)
+    return per_sample[valid_sample].mean()
+
+
+def boundary_iou(
+    pred_mask: torch.Tensor,
+    gt_mask: torch.Tensor,
+    radius: int = 2,
+    threshold: float = 0.5,
+    eps: float = 1e-6,
+) -> torch.Tensor:
+    """Boundary IoU (Cheng et al., CVPR 2021) – the standard definition.
+
+    Boundary IoU = | (pred ∩ pred_boundary) ∩ (gt ∩ gt_boundary) |
+                  / | (pred ∩ pred_boundary) ∪ (gt ∩ gt_boundary) |
+
+    where ``X_boundary`` is the 1-px-wide boundary of X. Each side uses
+    its OWN boundary (the previous implementation shared GT's boundary,
+    which gave a systematic under-estimate).
+
+    ``radius`` controls boundary thickness; CVPR'21 uses 2 (≈ 0.4% × diag).
+    """
+    pred_b = _as_binary(pred_mask, threshold)
+    gt_b   = _as_binary(gt_mask,   0.5)
+
+    pred_boundary = _boundary_of(pred_b, radius)
+    gt_boundary   = _boundary_of(gt_b,   radius)
+
+    p_b = pred_b * pred_boundary
+    g_b = gt_b   * gt_boundary
+
+    inter = (p_b * g_b).sum(dim=[1, 2, 3])
+    union = ((p_b + g_b) > 0).float().sum(dim=[1, 2, 3])
+
+    valid_sample = union > 0
+    if valid_sample.sum() == 0:
+        return pred_mask.new_zeros(())
+    return (inter / (union + eps))[valid_sample].mean()
+
+
+# ---------------------------------------------------------------------------
+# Precision / Recall / F1  (added 2026-06-08 to diagnose precision deficit)
+# ---------------------------------------------------------------------------
+
+def precision_recall_f1(
+    pred_mask: torch.Tensor,
+    gt_mask: torch.Tensor,
+    threshold: float = 0.5,
+    eps: float = 1e-6,
+) -> Dict[str, torch.Tensor]:
+    """Pixel-level precision, recall, F1 for binary segmentation.
+
+    Reports the BATCH-AVERAGED metric (computed once over all pixels),
+    not per-sample averaged — this is the standard reporting form for
+    sparse-positive tasks like ours.
+    """
+    p = _as_binary(pred_mask, threshold)
+    g = _as_binary(gt_mask,   0.5)
+    tp = (p * g).sum()
+    fp = (p * (1 - g)).sum()
+    fn = ((1 - p) * g).sum()
+
+    precision = tp / (tp + fp + eps)
+    recall    = tp / (tp + fn + eps)
+    f1        = 2 * precision * recall / (precision + recall + eps)
+    return {"precision": precision, "recall": recall, "f1": f1}
+
+
+# ---------------------------------------------------------------------------
+# Structural-vs-Noise decomposition coverage (added for diagnosis)
+# ---------------------------------------------------------------------------
+
+def coverage_decomposed(
+    pred_mask: torch.Tensor,
+    gt_mask: torch.Tensor,
+    kernel: int = 3,
+    threshold: float = 0.5,
+    eps: float = 1e-6,
+) -> Dict[str, torch.Tensor]:
+    """How well does the prediction cover structured failure vs random dots?
+
+    Decomposes GT into:
+        gt_det   = open(gt, kernel)         # structured failure (recoverable)
+        gt_noise = gt - gt_det              # isolated dots (mostly unrecoverable)
+
+    Returns:
+        coverage_on_det:    recall on gt_det   (target: as close to 1.0 as possible)
+        coverage_on_noise:  recall on gt_noise (low value = healthy, model didn't
+                                                 over-fit to per-pixel noise)
+        noise_fraction:     gt_noise / gt_raw  (how noisy the dataset itself is)
+        fp_density:         FP / (H*W - GT_pos)  (lower = better precision)
+    """
+    p = _as_binary(pred_mask, threshold)
+    g = _as_binary(gt_mask,   0.5)
+    g_det   = _morph_open(g, radius=(kernel - 1) // 2)
+    g_noise = (g - g_det).clamp(0, 1)
+
+    cov_det   = (p * g_det).sum()   / (g_det.sum()   + eps)
+    cov_noise = (p * g_noise).sum() / (g_noise.sum() + eps)
+    noise_fr  = g_noise.sum() / (g.sum() + eps)
+
+    # FP density over true-negative pixels
+    fp = (p * (1 - g)).sum()
+    neg = (1 - g).sum()
+    fp_dens = fp / (neg + eps)
+
+    return {
+        "coverage_on_det":   cov_det,
+        "coverage_on_noise": cov_noise,
+        "noise_fraction":    noise_fr,
+        "fp_density":        fp_dens,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Prob polarisation – diagnose "hedging" behaviour
+# ---------------------------------------------------------------------------
+
+def prob_polarisation(
+    pred_prob: torch.Tensor,
+    low: float = 0.2,
+    high: float = 0.8,
+) -> torch.Tensor:
+    """Fraction of pixels whose predicted prob is in [low, high].
+
+    A confident binary classifier polarises its outputs to ≈ 0 or ≈ 1.
+    A "hedging" classifier (the failure mode you suspected) leaves a lot
+    of mass in [0.2, 0.8]. Tracking this each epoch is cheap and tells
+    us immediately if asymmetric BCE / sharpness penalty is working.
+
+    Returns a scalar in [0, 1]; lower = better polarisation.
+    """
+    p = pred_prob.clamp(0.0, 1.0)
+    return ((p > low) & (p < high)).float().mean()
+
+
+# ---------------------------------------------------------------------------
+# Boundary-MAE — depth MAE in the boundary band
 # ---------------------------------------------------------------------------
 
 def boundary_mae(
@@ -61,27 +236,24 @@ def boundary_mae(
     radius: int = 5,
     eps: float = 1e-6,
 ) -> torch.Tensor:
-    """
-    Mean Absolute Error of depth prediction within `radius` pixels of GT
-    hole boundary, evaluated only on valid (non-hole) pixels.
+    """Depth MAE within ``radius`` px of GT hole boundary, on VALID pixels
+    only (excludes pixels inside holes).
 
-    Args:
-        pred_depth:   [B, 1, H, W]  predicted depth (meters)
-        gt_depth:     [B, 1, H, W]  ground-truth real depth (meters)
-        gt_hole_mask: [B, 1, H, W]  1=hole, 0=valid
-        radius:       boundary dilation radius (default 5px per TPAMI plan)
-
-    Returns:
-        Scalar tensor: mean boundary-MAE across batch
+    ``gt_hole_mask`` is treated as binary via _as_binary.
     """
-    boundary = _boundary_region(gt_hole_mask, radius)        # [B,1,H,W]
-    valid = (1.0 - gt_hole_mask) * boundary                  # valid pixels near boundary
-    mae = torch.abs(pred_depth - gt_depth) * valid
-    return mae.sum() / (valid.sum() + eps)
+    gt_b = _as_binary(gt_hole_mask, 0.5)
+    # boundary band = pixels close to the hole/valid transition
+    dil_hole  = _dilate_bin(gt_b,       radius)
+    dil_valid = _dilate_bin(1.0 - gt_b, radius)
+    band = (dil_hole * dil_valid).clamp(0, 1)
+    valid_in_band = (1.0 - gt_b) * band
+
+    mae = torch.abs(pred_depth - gt_depth) * valid_in_band
+    return mae.sum() / (valid_in_band.sum() + eps)
 
 
 # ---------------------------------------------------------------------------
-# Flying-Pixel Rate
+# Flying-pixel rate
 # ---------------------------------------------------------------------------
 
 def flying_pixel_rate(
@@ -91,110 +263,72 @@ def flying_pixel_rate(
     multiplier: float = 2.0,
     eps: float = 1e-6,
 ) -> torch.Tensor:
-    """
-    Fraction of valid pixels adjacent to holes whose depth error exceeds
-    `multiplier` × the global MAE (flying pixel criterion).
-
-    Args:
-        pred_depth:   [B, 1, H, W]
-        gt_depth:     [B, 1, H, W]
-        gt_hole_mask: [B, 1, H, W]  1=hole, 0=valid
-        multiplier:   threshold = multiplier × global_mae (default 2.0)
-
-    Returns:
-        Scalar tensor: flying pixel rate (fraction)
-    """
-    valid = 1.0 - gt_hole_mask
-    adj_to_hole = _dilate_mask(gt_hole_mask, radius=1) * valid    # valid pixels adjacent to holes
+    """Fraction of valid pixels adjacent to holes whose depth error exceeds
+    ``multiplier`` × the global MAE."""
+    gt_b = _as_binary(gt_hole_mask, 0.5)
+    valid = 1.0 - gt_b
+    adj   = _dilate_bin(gt_b, 1) * valid     # valid pixels adjacent to a hole
 
     err = torch.abs(pred_depth - gt_depth)
     global_mae = (err * valid).sum() / (valid.sum() + eps)
-    threshold = multiplier * global_mae
-
-    flying = (err > threshold) * adj_to_hole
-    return flying.sum() / (adj_to_hole.sum() + eps)
+    flying = (err > multiplier * global_mae).float() * adj
+    return flying.sum() / (adj.sum() + eps)
 
 
 # ---------------------------------------------------------------------------
-# Invalidation IoU
-# ---------------------------------------------------------------------------
-
-def inv_iou(
-    pred_mask: torch.Tensor,
-    gt_mask: torch.Tensor,
-    threshold: float = 0.5,
-    eps: float = 1e-6,
-) -> torch.Tensor:
-    """
-    IoU between predicted and GT hole masks (invalidation regions).
-
-    Args:
-        pred_mask: [B, 1, H, W]  predicted hole probability or binary mask
-        gt_mask:   [B, 1, H, W]  GT hole mask (binary)
-    """
-    pred_bin = (pred_mask > threshold).float()
-    intersection = (pred_bin * gt_mask).sum(dim=[1,2,3])
-    union = ((pred_bin + gt_mask) > 0).float().sum(dim=[1,2,3])
-    return (intersection / (union + eps)).mean()
-
-
-# ---------------------------------------------------------------------------
-# Boundary IoU
-# ---------------------------------------------------------------------------
-
-def boundary_iou(
-    pred_mask: torch.Tensor,
-    gt_mask: torch.Tensor,
-    radius: int = 5,
-    threshold: float = 0.5,
-    eps: float = 1e-6,
-) -> torch.Tensor:
-    """IoU computed only within the boundary region (±radius of GT boundary)."""
-    boundary = _boundary_region(gt_mask, radius)
-    pred_bin = (pred_mask > threshold).float()
-    pred_b = pred_bin * boundary
-    gt_b   = gt_mask  * boundary
-    intersection = (pred_b * gt_b).sum(dim=[1,2,3])
-    union = ((pred_b + gt_b) > 0).float().sum(dim=[1,2,3])
-    return (intersection / (union + eps)).mean()
-
-
-# ---------------------------------------------------------------------------
-# Temporal Noise Flicker Rate (TNFR)
+# Temporal Noise Flicker Rate
 # ---------------------------------------------------------------------------
 
 def tnfr(
     pred_masks: torch.Tensor,
     gt_masks: torch.Tensor,
+    threshold: float = 0.5,
     eps: float = 1e-6,
 ) -> torch.Tensor:
-    """
-    Temporal Noise Flicker Rate: fraction of pixels where the predicted mask
-    flips between consecutive frames while the GT does NOT change.
+    """Fraction of pixels where the predicted mask flips between frames
+    while GT did NOT change.
 
-    Measures temporal inconsistency of hole prediction on video sequences.
+    Inputs are [B, T, 1, H, W]. Now binarised internally (previous impl
+    used float != which is bit-fragile)."""
+    assert pred_masks.shape == gt_masks.shape and pred_masks.ndim == 5
+    p = _as_binary(pred_masks, threshold)
+    g = _as_binary(gt_masks,   0.5)
 
-    Args:
-        pred_masks: [B, T, 1, H, W]  predicted hole masks (binary), T frames
-        gt_masks:   [B, T, 1, H, W]  GT hole masks (binary)
-
-    Returns:
-        Scalar tensor: TNFR (lower is better)
-    """
-    assert pred_masks.shape == gt_masks.shape
-    assert pred_masks.ndim == 5, "Expected [B, T, 1, H, W]"
-
-    # Consecutive-frame differences
-    pred_flip = (pred_masks[:, 1:] != pred_masks[:, :-1]).float()  # [B,T-1,1,H,W]
-    gt_stable = (gt_masks[:, 1:] == gt_masks[:, :-1]).float()      # GT did NOT change
-
-    # Flicker = pred flipped but GT was stable
+    pred_flip = (p[:, 1:] != p[:, :-1]).float()
+    gt_stable = (g[:, 1:] == g[:, :-1]).float()
     flicker = pred_flip * gt_stable
     return flicker.sum() / (gt_stable.sum() + eps)
 
 
 # ---------------------------------------------------------------------------
-# Standard depth metrics (for compatibility)
+# All-in-one evaluation
+# ---------------------------------------------------------------------------
+
+def evaluate_bnd(
+    pred_prob: torch.Tensor,
+    gt_mask: torch.Tensor,
+    threshold: float = 0.5,
+    boundary_radius: int = 2,
+    noise_kernel: int = 3,
+) -> Dict[str, float]:
+    """One-shot evaluation for BND. Returns a flat dict of scalars.
+
+    Use this in train_bnd_plus.py's eval loop in place of calling each
+    metric individually."""
+    res = {
+        "inv_iou":          inv_iou(pred_prob, gt_mask, threshold).item(),
+        "boundary_iou":     boundary_iou(pred_prob, gt_mask, boundary_radius, threshold).item(),
+        "prob_polarisation": prob_polarisation(pred_prob).item(),
+    }
+    prf = precision_recall_f1(pred_prob, gt_mask, threshold)
+    res.update({k: v.item() for k, v in prf.items()})
+    cov = coverage_decomposed(pred_prob, gt_mask, noise_kernel, threshold)
+    res.update({k: v.item() for k, v in cov.items()})
+    return res
+
+
+# ---------------------------------------------------------------------------
+# Standard depth metrics (unchanged)
 # ---------------------------------------------------------------------------
 
 def compute_depth_metrics_full(
@@ -203,27 +337,23 @@ def compute_depth_metrics_full(
     gt_hole_mask: torch.Tensor,
     max_depth: float = 5.0,
 ) -> dict:
-    """
-    Full metric suite for PRISM+ evaluation.
-
-    Returns dict with: mae, rmse, abs_rel, delta1.25,
-                       inv_iou, boundary_mae, flying_pixel_rate
-    """
-    valid = (1.0 - gt_hole_mask) * (gt_depth > 0.05).float() * (gt_depth < max_depth).float()
+    valid = (1.0 - _as_binary(gt_hole_mask, 0.5)) \
+            * (gt_depth > 0.05).float() * (gt_depth < max_depth).float()
     eps = 1e-6
 
     err = torch.abs(pred_depth - gt_depth)
     mae      = (err * valid).sum() / (valid.sum() + eps)
     rmse     = ((err**2 * valid).sum() / (valid.sum() + eps)).sqrt()
-    abs_rel  = ((err / (gt_depth.clamp(min=eps))) * valid).sum() / (valid.sum() + eps)
-    ratio    = torch.max(pred_depth / gt_depth.clamp(min=eps), gt_depth.clamp(min=eps) / pred_depth.clamp(min=eps))
+    abs_rel  = ((err / gt_depth.clamp(min=eps)) * valid).sum() / (valid.sum() + eps)
+    ratio    = torch.max(pred_depth / gt_depth.clamp(min=eps),
+                         gt_depth / pred_depth.clamp(min=eps))
     delta125 = ((ratio < 1.25).float() * valid).sum() / (valid.sum() + eps)
 
     return {
-        'mae':               mae.item(),
-        'rmse':              rmse.item(),
-        'abs_rel':           abs_rel.item(),
-        'delta1.25':         delta125.item(),
-        'boundary_mae':      boundary_mae(pred_depth, gt_depth, gt_hole_mask).item(),
-        'flying_pixel_rate': flying_pixel_rate(pred_depth, gt_depth, gt_hole_mask).item(),
+        "mae":               mae.item(),
+        "rmse":              rmse.item(),
+        "abs_rel":           abs_rel.item(),
+        "delta1.25":         delta125.item(),
+        "boundary_mae":      boundary_mae(pred_depth, gt_depth, gt_hole_mask).item(),
+        "flying_pixel_rate": flying_pixel_rate(pred_depth, gt_depth, gt_hole_mask).item(),
     }
