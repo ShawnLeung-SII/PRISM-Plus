@@ -29,7 +29,7 @@ lr: 1.0e-4
 # --- PrecisionFocusedLoss weights ---
 w_abce:      1.0       # asymmetric BCE (FP heavy)
 w_tversky:   0.5       # Tversky (alpha>beta = precision-leaning Dice)
-w_sharp:     0.2       # sharpness penalty (anti-hedging)
+w_sharp:     0.05      # reduced from 0.2 (NaN risk under fp16)
 w_bedge:     0.5       # boundary-weighted asymmetric BCE
 w_coarse:    0.3       # coarse-stage supervision
 w_edge_sup:  0.3       # edge head supervision

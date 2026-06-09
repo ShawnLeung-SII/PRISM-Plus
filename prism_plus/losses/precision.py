@@ -35,24 +35,21 @@ def asymmetric_bce(
     fn_weight: float = 1.0,   # penalty on FN (missing a real hole)
     eps: float = 1e-6,
 ) -> torch.Tensor:
-    """Weighted BCE that penalises FP more heavily than FN.
+    """Weighted BCE that penalises FP more heavily than FN — AMP-safe.
 
-    Standard BCE = -[gt log p + (1-gt) log(1-p)]
-    Here we re-weight the two halves:
-        loss = -[fn_weight * gt * log p  +  fp_weight * (1-gt) * log(1-p)]
+    Implementation: per-pixel weight passed to F.binary_cross_entropy_with_logits,
+    which uses log-sum-exp internally for numerical stability under fp16.
+        weight = gt * fn_weight + (1-gt) * fp_weight
 
-    A simple way to invert PyTorch's pos_weight (which boosts the positive
-    half — exactly the opposite of what we want when recall ≫ precision).
+    This is mathematically equivalent to:
+        loss = -[fn_weight * gt * logsigmoid(z) + fp_weight * (1-gt) * logsigmoid(-z)]
+    but never materialises sigmoid(z) so doesn't blow up at saturating logits.
     """
-    pred = torch.sigmoid(pred_logits).clamp(eps, 1 - eps)
-    g = gt.to(pred.dtype)
-
-    # Positive term (FN penalty when g=1 and pred<1)
-    loss_pos = -g * pred.log()                            # shape: pred
-    # Negative term (FP penalty when g=0 and pred>0)
-    loss_neg = -(1.0 - g) * (1.0 - pred).log()
-    loss = fn_weight * loss_pos + fp_weight * loss_neg
-    return loss.mean()
+    g = gt.to(pred_logits.dtype)
+    weight = g * fn_weight + (1.0 - g) * fp_weight
+    return F.binary_cross_entropy_with_logits(
+        pred_logits, g, weight=weight, reduction="mean"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -127,10 +124,11 @@ def boundary_weighted_bce(
     band = gt_boundary_band(gt, radius)
     weight = 1.0 + (band_weight - 1.0) * band
 
-    pred = torch.sigmoid(pred_logits).clamp(eps, 1 - eps)
-    g = gt.to(pred.dtype)
-    raw = -(fn_weight * g * pred.log() + fp_weight * (1 - g) * (1 - pred).log())
-    return (raw * weight).mean()
+    g = gt.to(pred_logits.dtype)
+    pixel_w = (g * fn_weight + (1.0 - g) * fp_weight) * weight
+    return F.binary_cross_entropy_with_logits(
+        pred_logits, g, weight=pixel_w, reduction="mean"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -188,9 +188,16 @@ def main():
                     gt_mask=gt_m,
                 )
                 loss = lossd["loss"]
+            # NaN/Inf guard — skip step if loss exploded (rare but real under AMP fp16)
+            if not torch.isfinite(loss):
+                if env["main"]:
+                    print(f"  [warn] non-finite loss = {loss.item()}, skipping batch")
+                optim.zero_grad(set_to_none=True)
+                scaler.update()
+                continue
             scaler.scale(loss).backward()
             scaler.unscale_(optim)
-            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            nn.utils.clip_grad_norm_(model.parameters(), 0.5)
             scaler.step(optim)
             scaler.update()
             sum_t += loss.item()
