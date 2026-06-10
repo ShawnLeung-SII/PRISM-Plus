@@ -9,8 +9,8 @@ logs/
 wandb/
 
 # Data
-data/
-datasets/
+/data/
+/datasets/
 
 # Python
 __pycache__/
