@@ -1,0 +1,45 @@
+# PRISM+ Stage 1 v0.4.0 — Density-Aware BND
+# Multi-dim GT decomposition (medium preset) + vanilla weighted BCE.
+# Hardware target: 4× NVIDIA H100 80GB or H200 141GB.
+
+# --- data ---
+data_root: /inspire/hdd/project/robot-dna/liangxiujian-253308390319/ByteCameraDepth
+resolution: 512
+num_workers: 8
+
+# --- GT decomposition preset (chosen 2026-06-10 from 100-sample visual review) ---
+# medium: kernel=3, area_thresh=10, density_window=5, density_thresh=5
+# ~22% pixel ignore ratio on average
+gt_preset: medium
+
+# --- VFM backbone ---
+vfm_type: moge2
+vfm_checkpoint: /inspire/hdd/global_user/liangxiujian-253308390319/0-XIUJIANLIANG/weights/moge2.pt
+encoder_size: large
+
+# --- Model (unchanged from v0.3.x) ---
+vfm_cross_attn_dim: 128
+boundary_band_radius: 3
+
+# --- GPU-adaptive batch size ---
+batch_size_by_gpu:
+  H200:    32
+  H100:    12
+  "4090":  4
+batch_size: 12         # fallback
+epochs: 100
+lr: 1.0e-4
+
+# --- DensityLoss weights ---
+# Intentionally minimal: just weighted BCE with M_ignore mask + small coarse aux.
+# No pos_weight, no asymmetric, no Tversky, no sharpness — see density.py for why.
+w_main:   1.0
+w_coarse: 0.3
+w_edge:   0.0          # default OFF; raw BCE on M_target is enough
+edge_pos_weight: 5.0
+
+# --- Visualisation ---
+vis_n_samples: 10
+
+# --- Output ---
+output_dir: /inspire/hdd/global_user/liangxiujian-253308390319/0-XIUJIANLIANG/checkpoints/prism_plus/stage1_v4

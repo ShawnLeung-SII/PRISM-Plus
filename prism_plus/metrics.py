@@ -357,3 +357,17 @@ def compute_depth_metrics_full(
         "boundary_mae":      boundary_mae(pred_depth, gt_depth, gt_hole_mask).item(),
         "flying_pixel_rate": flying_pixel_rate(pred_depth, gt_depth, gt_hole_mask).item(),
     }
+
+
+# ---------------------------------------------------------------------------
+# v0.4.0 — calibration & ranking metrics for density-aware training
+# ---------------------------------------------------------------------------
+from .calibration_metrics import (
+    expected_calibration_error,
+    brier_score,
+    auroc,
+    precision_recall_curve,
+    iou_multi_threshold,
+    iou_on_target,
+    evaluate_density_full,
+)
