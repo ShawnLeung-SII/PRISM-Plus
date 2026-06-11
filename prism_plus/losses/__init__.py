@@ -12,6 +12,7 @@ from .precision import (
     boundary_weighted_bce, gt_boundary_band,
 )
 from .density   import DensityLoss    # v0.4.0
+from .v9_style  import V9StyleLoss    # v0.6.0 — adapted v9 recipe
 
 __all__ = [
     "HPPSLoss", "positive_weighted_bce", "dice_loss", "pp_dhm_bce",
@@ -23,4 +24,5 @@ __all__ = [
     "asymmetric_bce", "tversky_loss", "sharpness_loss",
     "boundary_weighted_bce", "gt_boundary_band",
     "DensityLoss",
+    "V9StyleLoss",
 ]

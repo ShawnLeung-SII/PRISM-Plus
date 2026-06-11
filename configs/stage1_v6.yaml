@@ -1,0 +1,60 @@
+# PRISM+ Stage 1 v0.6.0 — C1 architecture + v9-style loss
+# Goal: retain v0.4 calibration/metrics, regain v9 visual richness.
+# Strategy: train on RAW hole_mask (no GT denoising), report metrics on BOTH
+# raw GT and M_target so the IoU number reflects true detection ability.
+
+# --- data ---
+data_root: /inspire/hdd/project/robot-dna/liangxiujian-253308390319/ByteCameraDepth
+resolution: 512
+num_workers: 8
+
+# GT decomposition is EVAL-ONLY (training uses raw hole_mask).
+# 'medium' = kernel=3, area_thresh=10, density_window=5, density_thresh=5
+gt_preset: medium
+
+# --- VFM backbone ---
+vfm_type: moge2
+vfm_checkpoint: /inspire/hdd/global_user/liangxiujian-253308390319/0-XIUJIANLIANG/weights/moge2.pt
+encoder_size: large
+
+# --- Model (PRISMPlusBND C1) ---
+vfm_cross_attn_dim: 128
+boundary_band_radius: 3
+
+# --- GPU-adaptive batch size ---
+batch_size_by_gpu:
+  H200:    32
+  H100:    12
+  "4090":  4
+batch_size: 12
+epochs: 100
+lr: 1.0e-4
+weight_decay: 1.0e-2
+
+# --- V9StyleLoss ---
+pos_weight:           3.0
+use_ohem:             true
+# NOTE: v9 used 0.1 — too aggressive (high variance, can collapse).
+# 0.3 is the Faster-R-CNN sweet spot. Keep configurable for ablation.
+ohem_ratio:           0.3
+use_small_region:     true
+small_region_weight:  2.0
+small_region_kernel:  5
+dice_weight:          0.3
+use_lpips:            true
+lpips_weight:         1.0
+
+# head weighting on PRISMPlusBND outputs
+w_final:              1.0
+w_coarse:             0.3
+w_edge:               0.0   # boundary branch supervision OFF by default
+
+label_smoothing:      0.0
+focal_gamma:          0.0
+
+# --- Eval ---
+eval_threshold:       0.25   # v9-style low threshold to keep detail
+vis_n_samples:        10
+
+# --- Output ---
+output_dir: /inspire/hdd/global_user/liangxiujian-253308390319/0-XIUJIANLIANG/checkpoints/prism_plus/stage1_v6
