@@ -6,10 +6,12 @@ from .boundary    import BoundaryBranch, BoundaryRefiner
 
 # NRG is optional (requires diffusion stack: cldm + ldm + diffusers)
 try:
-    from .nrg import NRG
+    from .nrg            import NRG
+    from .nrg_standalone import NRGStandalone   # PRISM+ C2 (independent NRG)
     _HAS_NRG = True
 except ImportError:
     NRG = None
+    NRGStandalone = None
     _HAS_NRG = False
 
 __all__ = [
@@ -20,6 +22,6 @@ __all__ = [
     # v0.2.0 C1-redesigned (Coarse Semantic Prior + Boundary Refinement)
     "PRISMPlusBND", "create_bnd_plus", "GatedVFMCrossAttn",
     "BoundaryBranch", "BoundaryRefiner",
-    # NRG (Stage 2)
-    "NRG",
+    # NRG (Stage 2 / PRISM+ C2)
+    "NRG", "NRGStandalone",
 ]

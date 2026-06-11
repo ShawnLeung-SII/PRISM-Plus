@@ -1,0 +1,53 @@
+# PRISM+ Stage 2a — Mask-conditioned NRG (C2, standalone)
+# Frozen BND v0.4 → mask_density → NRGStandalone (SD-inpainting 9-ch UNet)
+
+# --- data ---
+data_root: /inspire/hdd/project/robot-dna/liangxiujian-253308390319/ByteCameraDepth
+resolution: 256
+num_workers: 4
+
+# --- BND v0.4 (frozen, condition source) ---
+vfm_type: moge2
+vfm_checkpoint: /inspire/hdd/global_user/liangxiujian-253308390319/0-XIUJIANLIANG/weights/moge2.pt
+encoder_size: large
+vfm_cross_attn_dim: 128
+boundary_band_radius: 3
+bnd_v4_checkpoint: /inspire/hdd/global_user/liangxiujian-253308390319/0-XIUJIANLIANG/checkpoints/prism_plus/stage1_v4/best.pt
+
+# --- NRGStandalone ---
+sd_checkpoint: /inspire/ssd/project/robot-dna/liangxiujian-253308390319/latpixdepth/latpixdepth/checkpoints/Latent_SD.ckpt
+
+# Depth normalisation
+d_min: 0.05
+d_max: 5.0
+filter_max: 4.9
+residual_scale: 2.0
+
+# Latent scaling (SD-1.5 default)
+scale_factor: 0.18215
+
+# Diffusion schedule
+num_timesteps: 1000
+linear_start: 0.00085
+linear_end: 0.0120
+
+# L_boundary
+lambda_boundary: 0.3
+boundary_radius: 5
+
+# Freeze flags
+freeze_vae: true
+freeze_text: true
+freeze_unet: false       # UNet is the trainable component (C2 main effect)
+
+# --- Optim ---
+batch_size_by_gpu:
+  H200:   4
+  H100:   2
+  "4090": 1
+batch_size: 2
+epochs: 50
+lr: 1.0e-5               # SD fine-tune; lower than from-scratch
+
+# --- Output ---
+output_dir: /inspire/hdd/global_user/liangxiujian-253308390319/0-XIUJIANLIANG/checkpoints/prism_plus/stage2a_nrg
