@@ -260,16 +260,16 @@ def main():
             history.append(metrics)
 
             print(f'Ep{epoch:03d} | loss={sum_t:.4f}'
-                  f' | iou_tgt@0.5={metrics.get("iou_on_target@0.5",0):.4f}'
-                  f' iou_raw@0.5={metrics.get("iou@0.5",0):.4f}'
-                  f' main@0.25={metrics.get("main_inv_iou",0):.4f}'
-                  f' | iou@0.3={metrics.get("iou@0.3",0):.4f}'
-                  f' iou@0.7={metrics.get("iou@0.7",0):.4f}'
+                  f' | iou_cleaned@.25={metrics.get("iou_cleaned@0.25",0):.4f}'      # ★ main fair metric
+                  f' iou_cleaned@.5={metrics.get("iou_cleaned@0.5",0):.4f}'
+                  f' | iou_tgt@.5={metrics.get("iou_on_target@0.5",0):.4f}'           # one-sided clean (GT only)
+                  f' iou_raw@.5={metrics.get("iou@0.5",0):.4f}'                       # no cleaning
                   f' | ECE={metrics.get("ece",0):.4f}'
                   f' AUROC={metrics.get("auroc",0):.4f}'
-                  f' | P@0.25={metrics.get("P@0.3",0):.3f}'
-                  f' R@0.25={metrics.get("R@0.3",0):.3f}'
-                  f' F1@0.25={metrics.get("F1@0.3",0):.3f}')
+                  f' Brier={metrics.get("brier",0):.4f}'
+                  f' | P@.25={metrics.get("P@0.3",0):.3f}'
+                  f' R@.25={metrics.get("R@0.3",0):.3f}'
+                  f' F1@.25={metrics.get("F1@0.3",0):.3f}')
 
             if vis_rgb:
                 v_rgb=torch.cat(vis_rgb); v_sim=torch.cat(vis_sim); v_real=torch.cat(vis_real)
@@ -282,9 +282,9 @@ def main():
                     print(f'  [warn] vis dump failed: {e}')
 
             mdl = model.module if env['dist'] else model
-            iou_target = metrics.get('iou_on_target@0.5', 0.0)
-            if iou_target > best_iou_target:
-                best_iou_target = iou_target
+            iou_main = metrics.get('iou_cleaned@0.25', 0.0)
+            if iou_main > best_iou_target:
+                best_iou_target = iou_main
                 torch.save({'epoch': epoch, 'model': mdl.state_dict(),
                             'metrics': metrics}, out_dir / 'best.pt')
             if epoch % 10 == 0:
@@ -297,7 +297,7 @@ def main():
                    out_dir / 'final.pt')
         with open(out_dir / 'training_history.json', 'w') as f:
             json.dump(history, f, indent=2)
-        print(f'\nDone. Best iou_on_target@0.5 = {best_iou_target:.4f} -> {out_dir}')
+        print(f'\nDone. Best iou_cleaned@0.25 = {best_iou_target:.4f} -> {out_dir}')
 
     if env['dist']:
         dist.destroy_process_group()

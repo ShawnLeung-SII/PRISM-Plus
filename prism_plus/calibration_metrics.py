@@ -207,6 +207,48 @@ def iou_on_target(
 # All-in-one for v0.4.0 eval loop
 # ---------------------------------------------------------------------------
 
+
+# ---------------------------------------------------------------------------
+# Symmetric noise-filtered IoU
+# ---------------------------------------------------------------------------
+
+def iou_cleaned(
+    pred_prob: torch.Tensor,
+    M_target: torch.Tensor,
+    threshold: float = 0.25,
+    preset: str = "medium",
+    eps: float = 1e-6,
+) -> float:
+    """Symmetric noise-filtered IoU.
+
+    Applies the SAME morphology+density filter (gt_decompose preset) to both
+    the GT and the binarised prediction, then computes IoU. This is the fair
+    metric when training on raw GT but evaluating only the *structured* hole
+    regions both sides — random-noise predictions and random-noise GT pixels
+    are removed before scoring, so neither side is penalised for noise.
+
+    Args:
+        pred_prob : [B,1,H,W] in [0,1]
+        M_target  : [B,1,H,W] de-noised GT (already cleaned by GTDecomposeWrapper)
+        threshold : binarisation threshold on pred_prob
+        preset    : GT decomposition preset ("conservative"/"medium"/"aggressive")
+    """
+    # Local import to avoid cyclic dep at module load time
+    from prism_plus.data.gt_decompose import decompose_gt_preset
+
+    pred_bin = (pred_prob > threshold).float()
+    cleaned_pred, _ = decompose_gt_preset(pred_bin, preset)
+    cleaned_pred = cleaned_pred.float()
+    gt_bin = (M_target > 0.5).float()
+
+    inter = (cleaned_pred * gt_bin).sum(dim=[1, 2, 3])
+    union = ((cleaned_pred + gt_bin) > 0).float().sum(dim=[1, 2, 3])
+    valid = union > 0
+    if not valid.any():
+        return 0.0
+    return float((inter[valid] / (union[valid] + eps)).mean())
+
+
 def evaluate_density_full(
     pred_prob: torch.Tensor,
     gt_raw: torch.Tensor,
@@ -226,6 +268,12 @@ def evaluate_density_full(
 
     # IoU @ 0.5 vs M_target (反映真实学习能力)
     res["iou_on_target@0.5"] = iou_on_target(pred_prob, M_target, 0.5)
+
+    # Symmetric noise-filtered IoU — clean BOTH pred and GT, then score.
+    # This is the main metric for v0.6 training (train on raw GT, eval on
+    # structured-only intersection).
+    res["iou_cleaned@0.25"] = iou_cleaned(pred_prob, M_target, 0.25, preset="medium")
+    res["iou_cleaned@0.5"]  = iou_cleaned(pred_prob, M_target, 0.5,  preset="medium")
 
     # Calibration & ranking (whole image)
     res["ece"]   = float(expected_calibration_error(pred_prob, gt_raw))
