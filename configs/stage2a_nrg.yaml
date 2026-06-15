@@ -12,7 +12,7 @@ vfm_checkpoint: /inspire/hdd/global_user/liangxiujian-253308390319/0-XIUJIANLIAN
 encoder_size: large
 vfm_cross_attn_dim: 128
 boundary_band_radius: 3
-bnd_v4_checkpoint: /inspire/hdd/global_user/liangxiujian-253308390319/0-XIUJIANLIANG/checkpoints/prism_plus/stage1_v4/best.pt
+bnd_v4_checkpoint: /inspire/hdd/global_user/liangxiujian-253308390319/0-XIUJIANLIANG/checkpoints/prism_plus/stage1_v6/best.pt   # v0.6.1 PRISMPlusBND backbone
 
 # --- NRGStandalone ---
 sd_checkpoint: /inspire/ssd/project/robot-dna/liangxiujian-253308390319/latpixdepth/latpixdepth/checkpoints/Latent_SD.ckpt
