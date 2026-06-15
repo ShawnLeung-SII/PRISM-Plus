@@ -25,3 +25,25 @@ __all__ = [
     # NRG (Stage 2 / PRISM+ C2)
     "NRG", "NRGStandalone",
 ]
+
+# C3 LoRA-SPA + C4 TNSM + flow utils
+try:
+    from .lora_spa  import LoRASPA, LoRAAdapter, create_lora_spa
+    _HAS_LORA = True
+except ImportError:
+    LoRASPA = LoRAAdapter = create_lora_spa = None
+    _HAS_LORA = False
+
+try:
+    from .tnsm import TNSM, ConvGRUCell
+    _HAS_TNSM = True
+except ImportError:
+    TNSM = ConvGRUCell = None
+    _HAS_TNSM = False
+
+try:
+    from .flow_utils import RAFTFlow, RAFTWrapper, backward_warp, downsample_flow, make_zero_flow
+    _HAS_FLOW = True
+except ImportError:
+    RAFTFlow = RAFTWrapper = backward_warp = downsample_flow = make_zero_flow = None
+    _HAS_FLOW = False

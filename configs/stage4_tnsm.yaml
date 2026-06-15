@@ -1,0 +1,39 @@
+# PRISM+ Stage 4 — TNSM temporal training
+# Train ConvGRU @ H/4, backbone + RAFT frozen.
+
+v06_checkpoint: /inspire/hdd/global_user/liangxiujian-253308390319/0-XIUJIANLIANG/checkpoints/prism_plus/stage1_v6/best.pt
+vfm_type: moge2
+vfm_checkpoint: /inspire/hdd/global_user/liangxiujian-253308390319/0-XIUJIANLIANG/weights/moge2.pt
+encoder_size: large
+vfm_cross_attn_dim: 128
+boundary_band_radius: 3
+
+# TNSM
+tnsm_enc_channels: 1            # coarse_logits is single-channel; we adapt
+tnsm_state_channels: 128
+tnsm_spatial_div: 4
+tnsm_use_flow: true
+
+# RAFT
+raft_weights: C_T_V2
+raft_iters: 12
+
+# Data (DREDS scenes used as multi-view 'pseudo-video' until GraspNet ready)
+dreds_root: /inspire/hdd/global_user/liangxiujian-253308390319/datasets/DREDS/DREDS-CatKnown
+dreds_splits:
+  - shapenet_generate_1216/val_part2
+resolution: 256
+
+# Temporal window
+T: 4
+stride: 1
+
+# Optim
+batch_size: 2
+num_workers: 2
+epochs: 30
+lr: 5.0e-5
+pos_weight: 3.0
+ohem_ratio: 0.3
+
+output_dir: /inspire/hdd/global_user/liangxiujian-253308390319/0-XIUJIANLIANG/checkpoints/prism_plus/stage4_tnsm

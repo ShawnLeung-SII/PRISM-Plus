@@ -1,0 +1,36 @@
+# PRISM+ Stage 3 — LoRA-SPA cross-sensor fine-tune
+# Frozen v0.6 backbone, rank-4 LoRA per sensor on z_sem pathway
+
+# ----- Backbone (frozen) -----
+v06_checkpoint: /inspire/hdd/global_user/liangxiujian-253308390319/0-XIUJIANLIANG/checkpoints/prism_plus/stage1_v6/best.pt
+vfm_type: moge2
+vfm_checkpoint: /inspire/hdd/global_user/liangxiujian-253308390319/0-XIUJIANLIANG/weights/moge2.pt
+encoder_size: large
+vfm_cross_attn_dim: 128
+boundary_band_radius: 3
+
+# ----- LoRA -----
+d_sem: 1024
+lora_rank: 4
+lora_alpha: 1.0
+lora_dropout: 0.0
+
+# ----- Data (DREDS by default; override --sensor) -----
+dreds_root: /inspire/hdd/global_user/liangxiujian-253308390319/datasets/DREDS/DREDS-CatKnown
+dreds_splits:
+  - shapenet_generate_1216/val_part2
+resolution: 256
+n_val: 200
+
+# ----- Loss (V9 recipe, no LPIPS for speed) -----
+pos_weight: 3.0
+ohem_ratio: 0.3
+
+# ----- Optim -----
+batch_size: 4
+num_workers: 2
+epochs: 30
+lr: 1.0e-3            # higher LR for low-rank adapters
+
+# ----- Output -----
+output_dir: /inspire/hdd/global_user/liangxiujian-253308390319/0-XIUJIANLIANG/checkpoints/prism_plus/stage3_lora
