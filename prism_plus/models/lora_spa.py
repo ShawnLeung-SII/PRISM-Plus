@@ -141,27 +141,27 @@ class LoRASPA(nn.Module):
             out = original_forward(*args, **kwargs)
             sid = wrapper._active_sensor
             if sid is None:
-                return out                              # no sensor set -> identity
+                return out
             ad = wrapper.adapters[sid]
-
-            # Handle different VFM output formats
-            if isinstance(out, dict):
-                for key in ('x_norm_patchtokens', 'last_hidden_state'):
-                    if key in out:
-                        tok = out[key]                  # [B, N, d_sem]
-                        out[key] = tok + ad(tok)         # residual LoRA
-                        return out
-                return out
-            elif isinstance(out, list):
-                # multi-scale features list; assume last is the semantic one
-                if out and isinstance(out[-1], torch.Tensor) and out[-1].dim() == 3:
-                    out[-1] = out[-1] + ad(out[-1])
-                return out
-            elif isinstance(out, torch.Tensor):
-                if out.dim() == 3:                       # [B, N, d_sem]
-                    return out + ad(out)
-                if out.dim() == 2:                       # [B, d_sem]
-                    return out + ad(out)
+            # SemanticContext wraps the VFM call in torch.no_grad(), so we
+            # must locally re-enable autograd around the LoRA delta or the
+            # backward pass will fail. tok itself stays detached; only the
+            # delta carries gradient.
+            with torch.enable_grad():
+                if isinstance(out, dict):
+                    for key in ('x_norm_patchtokens', 'last_hidden_state'):
+                        if key in out and isinstance(out[key], torch.Tensor):
+                            out[key] = out[key] + ad(out[key])
+                            return out
+                    return out
+                if isinstance(out, list):
+                    if out and isinstance(out[-1], torch.Tensor) and out[-1].dim() == 3:
+                        out = list(out)
+                        out[-1] = out[-1] + ad(out[-1])
+                    return out
+                if isinstance(out, torch.Tensor):
+                    if out.dim() in (2, 3):
+                        return out + ad(out)
             return out
 
         vfm.forward = lora_forward
