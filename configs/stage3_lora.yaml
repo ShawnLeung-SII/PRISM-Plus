@@ -19,7 +19,7 @@ lora_dropout: 0.0
 dreds_root: /inspire/hdd/global_user/liangxiujian-253308390319/datasets/DREDS/DREDS-CatKnown
 dreds_splits:
   - shapenet_generate_1216/val_part2
-resolution: 256
+resolution: 392
 n_val: 200
 
 # ----- Loss (V9 recipe, no LPIPS for speed) -----
@@ -27,8 +27,8 @@ pos_weight: 3.0
 ohem_ratio: 0.3
 
 # ----- Optim -----
-batch_size: 4
-num_workers: 2
+batch_size: 32
+num_workers: 8
 epochs: 30
 lr: 1.0e-3            # higher LR for low-rank adapters
 
