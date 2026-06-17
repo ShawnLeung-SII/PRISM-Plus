@@ -120,9 +120,19 @@ class LoRASPA(nn.Module):
         is  and the global semantic embedding is the GAP-mean
         of patch tokens. We patch the VFM forward to add LoRA(z_sem).
         """
+        # PRISMPlusBND keeps the VFM under semantic_context.vfm; older BND has it
+        # at self.vfm directly. Probe both.
         vfm = getattr(self.base, 'vfm', None)
         if vfm is None:
-            raise RuntimeError('base model has no .vfm attribute — cannot install LoRA hook')
+            sc = getattr(self.base, 'semantic_context', None)
+            if sc is not None:
+                vfm = getattr(sc, 'vfm', None)
+        if vfm is None:
+            vfm = getattr(self.base, '_vfm', None)
+        if vfm is None:
+            raise RuntimeError(
+                'base model has no .vfm / .semantic_context.vfm / ._vfm attribute'
+            )
 
         original_forward = vfm.forward
         wrapper = self

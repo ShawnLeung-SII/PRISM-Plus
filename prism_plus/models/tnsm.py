@@ -84,7 +84,7 @@ class TNSM(nn.Module):
         # Project encoder feature into the ConvGRU input dim
         self.proj_enc = nn.Sequential(
             nn.Conv2d(self.enc_in_channels, self.state_channels, 1),
-            nn.GroupNorm(8, self.state_channels),
+            nn.GroupNorm(min(8, max(1, self.state_channels)), self.state_channels),
             nn.SiLU(),
         )
         self.gru = ConvGRUCell(in_ch=self.state_channels,
@@ -93,7 +93,7 @@ class TNSM(nn.Module):
         # Output projection (to feed back to BND decoder; same channels as input)
         self.proj_out = nn.Sequential(
             nn.Conv2d(self.state_channels, self.enc_in_channels, 1),
-            nn.GroupNorm(8, self.enc_in_channels),
+            nn.GroupNorm(min(8, max(1, self.enc_in_channels)), self.enc_in_channels),
         )
         # Time-embedding projection for NRG (320 = SD default)
         self.proj_temb = nn.Linear(self.state_channels, 320)
