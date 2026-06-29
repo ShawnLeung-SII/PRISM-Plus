@@ -163,39 +163,41 @@ def main():
             B, T_, _, H, W = rgb_t.shape
             optim.zero_grad()
 
-            with autocast('cuda'):
-                # Compute pairwise flows once (frame t -> frame t-1)
-                # rgb stored in [0,1] from DREDS adapter
+            # Compute pairwise flows (frozen RAFT) outside the autograd path
+            with torch.no_grad():
                 flows = []
                 for t in range(1, T_):
-                    f = raft(rgb_t[:, t] * 255.0 / 255.0, rgb_t[:, t - 1] * 255.0 / 255.0)
+                    f = raft(rgb_t[:, t], rgb_t[:, t - 1])
                     flows.append(f)
 
-                # BPTT through ConvGRU
+            with autocast('cuda'):
+                # BPTT through ConvGRU — loss path runs through TNSM.proj_*
                 h_prev = None
                 loss_per_frame = []
+                tnsm_mod = tnsm.module if env['dist'] else tnsm
                 for t in range(T_):
+                    # 1) Frozen backbone forward (no_grad to save mem)
                     with torch.no_grad():
-                        out = backbone(rgb_t[:, t], sim_t[:, t])
-                        enc_feat = out.get('coarse_logits', None)
-                        if enc_feat is None or enc_feat.dim() != 4:
-                            # Fallback: use prediction itself reshape-able
-                            enc_feat = out['failure_logits']
-                        # Downsample to H/4 if needed
+                        out_b = backbone(rgb_t[:, t], sim_t[:, t])
+                        coarse = out_b['coarse_logits']            # [B,1,H,W]
                         target_hw = (H // 4, W // 4)
-                        if enc_feat.shape[-2:] != target_hw:
-                            enc_feat = nn.functional.interpolate(
-                                enc_feat, size=target_hw, mode='bilinear', align_corners=False)
-                        # Make sure channels match TNSM expectation; if mismatch, project trivially
+                        enc_feat = nn.functional.interpolate(
+                            coarse, size=target_hw, mode='bilinear', align_corners=False)
+                    # 2) TNSM step (gradient flows through TNSM weights)
                     flow_in = flows[t - 1] if t > 0 else None
-                    h_prev_, _, _ = tnsm.module.step(enc_feat, h_prev, flow_in) \
-                        if env['dist'] else tnsm.step(enc_feat, h_prev, flow_in)
-                    h_prev = h_prev_
-
-                    # Per-frame loss against gt — we use the (frozen) backbone output
-                    # as the prediction baseline (TNSM here regularises temporal state;
-                    # full BND-injection mode comes next iteration)
-                    lossd = loss_fn(out, gt_t[:, t])
+                    h_prev, feat_out, _ = tnsm_mod.step(enc_feat, h_prev, flow_in)
+                    # 3) Upsample TNSM output to full res and FUSE into BND logits
+                    delta = nn.functional.interpolate(
+                        feat_out, size=out_b['failure_logits'].shape[-2:],
+                        mode='bilinear', align_corners=False)
+                    fused_logits = out_b['failure_logits'].detach() + delta
+                    out_fused = {
+                        'failure_logits': fused_logits,
+                        'coarse_logits':  None,
+                        'edge_logits':    None,
+                        'pred_failure':   torch.sigmoid(fused_logits),
+                    }
+                    lossd = loss_fn(out_fused, gt_t[:, t])
                     loss_per_frame.append(lossd['loss'])
                 loss = torch.stack(loss_per_frame).mean()
 

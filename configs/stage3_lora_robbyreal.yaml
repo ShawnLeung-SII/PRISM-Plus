@@ -1,0 +1,31 @@
+# PRISM+ Stage 3 — LoRA-SPA on LingBot RobbyReal (5 heterogeneous sensors)
+# Cross-vendor: orbbec_335 / 335L + RealSense D415 / D435 / D455
+v06_checkpoint: /inspire/hdd/global_user/liangxiujian-253308390319/0-XIUJIANLIANG/checkpoints/prism_plus/stage1_v6/best.pt
+vfm_type: moge2
+vfm_checkpoint: /inspire/hdd/global_user/liangxiujian-253308390319/0-XIUJIANLIANG/weights/moge2.pt
+encoder_size: large
+vfm_cross_attn_dim: 128
+boundary_band_radius: 3
+
+# LoRA
+d_sem: 1024
+lora_rank: 4
+lora_alpha: 1.0
+lora_dropout: 0.0
+
+# Data — LingBot RobbyReal (one sensor passed via --sensor flag)
+dataset_type: lingbot_robbyreal
+lingbot_root: /inspire/dataset/lingbot-mdm-depth/v1/RobbyReal
+resolution: 392
+n_val: 300
+
+# Loss (V9 recipe, no LPIPS)
+pos_weight: 3.0
+ohem_ratio: 0.3
+
+batch_size: 32
+num_workers: 8
+epochs: 30
+lr: 1.0e-3
+
+output_dir: /inspire/hdd/global_user/liangxiujian-253308390319/0-XIUJIANLIANG/checkpoints/prism_plus/stage3_lora_robbyreal

@@ -41,6 +41,23 @@ from prism_plus.models.lora_spa import LoRASPA
 
 # Registry: sensor_id -> dataset builder
 def _build_sensor_dataset(sensor_id: str, cfg: dict):
+    ds_type = cfg.get('dataset_type', 'dreds')
+    if ds_type == 'lingbot_robbyreal':
+        from prism_plus.data.lingbot import LingBotRobbyReal
+        return LingBotRobbyReal(
+            root=cfg['lingbot_root'],
+            sensors=[sensor_id],
+            resolution=cfg.get('resolution', 256),
+        )
+    if ds_type == 'lingbot_robbyvla':
+        from prism_plus.data.lingbot import LingBotRobbyVla
+        # sensor_id like 'robbyvla_franka_left_realsense405' -> robot=franka, cam=left_realsense405
+        parts = sensor_id.split('_', 2)   # ['robbyvla', 'franka', 'left_realsense405']
+        robot, cam = parts[1], parts[2] if len(parts) > 2 else parts[1]
+        return LingBotRobbyVla(
+            root=cfg['lingbot_root'], robots=[robot], cams=[cam],
+            resolution=cfg.get('resolution', 256),
+        )
     if sensor_id.startswith('dreds_'):
         return DREDSDataset(
             root=cfg['dreds_root'],
@@ -48,7 +65,7 @@ def _build_sensor_dataset(sensor_id: str, cfg: dict):
             resolution=cfg.get('resolution', 256),
             sensor_id=sensor_id,
         )
-    raise ValueError(f'Unsupported sensor_id: {sensor_id}')
+    raise ValueError(f'Unsupported sensor_id: {sensor_id} (dataset_type={ds_type})')
 
 
 def _split_indices(n: int, n_train: int, n_val: int, n_test: int, seed: int):
