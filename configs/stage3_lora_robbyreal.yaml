@@ -15,7 +15,7 @@ lora_dropout: 0.0
 
 # Data — LingBot RobbyReal (one sensor passed via --sensor flag)
 dataset_type: lingbot_robbyreal
-lingbot_root: /inspire/dataset/lingbot-mdm-depth/v1/RobbyReal
+lingbot_root: /inspire/hdd/global_user/liangxiujian-253308390319/datasets/RobbyReal
 resolution: 392
 n_val: 300
 
