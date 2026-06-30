@@ -110,12 +110,22 @@ def main():
 
     # ---- 4) Data: T-frame windows ----
     T = int(cfg.get('T', 4))
-    base = DREDSDataset(
-        root=cfg['dreds_root'],
-        splits=cfg.get('dreds_splits', ['shapenet_generate_1216/val_part2']),
-        resolution=cfg.get('resolution', 256),
-        sensor_id='dreds_d415',
-    )
+    ds_type = cfg.get('dataset_type', 'dreds')
+    if ds_type == 'lingbot_robbyvla':
+        from prism_plus.data.lingbot import LingBotRobbyVla
+        base = LingBotRobbyVla(
+            root=cfg['lingbot_root'],
+            robots=cfg.get('robots', ['franka', 'ur7e']),
+            cams=cfg.get('cams', ['left_realsense405', 'right_realsense405']),
+            resolution=cfg.get('resolution', 256),
+        )
+    else:
+        base = DREDSDataset(
+            root=cfg['dreds_root'],
+            splits=cfg.get('dreds_splits', ['shapenet_generate_1216/val_part2']),
+            resolution=cfg.get('resolution', 256),
+            sensor_id='dreds_d415',
+        )
     train_ds = TemporalWindow(base, T=T, stride=cfg.get('stride', 1))
     if env['main']:
         print(f'  [data] {len(train_ds)} {T}-frame windows from {len(base)} base frames')
