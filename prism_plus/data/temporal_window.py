@@ -54,11 +54,25 @@ class TemporalWindow(Dataset):
         scene_groups: dict = defaultdict(list)
         entries = getattr(base, 'entries', None)
         if entries is not None and isinstance(entries[0], tuple):
-            # DREDS-style: entries = [(scene_dir, frame_id), ...]
             from pathlib import Path as _P
-            for idx, (scene_dir, fid) in enumerate(entries):
-                sid = _P(scene_dir).name
-                scene_groups[sid].append((fid, idx))
+            for idx, entry in enumerate(entries):
+                if len(entry) == 2:
+                    # DREDS-style: (scene_dir, frame_id)
+                    scene_dir, fid = entry
+                    sid = _P(scene_dir).name
+                elif len(entry) >= 6:
+                    # LingBotRobbyVla-style:
+                    # (rgb, clean, noisy, sensor_id, seq_id, frame_id)
+                    sid = entry[4]
+                    fid = entry[5]
+                elif len(entry) >= 4:
+                    # DREDSDataset with extra: (rgb_path, clean, noisy, scene_token)
+                    from pathlib import Path as _PP
+                    sid = entry[3]
+                    fid = _PP(entry[0]).stem
+                else:
+                    sid = 'default'; fid = str(idx)
+                scene_groups[sid].append((str(fid), idx))
         else:
             for idx in range(len(base)):
                 sample = base[idx]
